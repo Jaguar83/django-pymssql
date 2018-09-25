@@ -1,51 +1,38 @@
-django-pyodbc-azure
+django-pymssql
 ===================
-
-.. image:: http://img.shields.io/pypi/v/django-pyodbc-azure.svg?style=flat
-    :target: https://pypi.python.org/pypi/django-pyodbc-azure
-
-.. image:: http://img.shields.io/pypi/l/django-pyodbc-azure.svg?style=flat
-    :target: http://opensource.org/licenses/BSD-3-Clause
-
-*django-pyodbc-azure* is a modern fork of
-`django-pyodbc <https://code.google.com/archive/p/django-pyodbc/>`__, a
+*django-pymssql* is a fork of
+`django-pyodbc-azure <https://github.com/michiya/django-pyodbc-azure>`__, a
 `Django <https://www.djangoproject.com/>`__ Microsoft SQL Server external
-DB backend that uses ODBC by employing the
-`pyodbc <https://github.com/mkleehammer/pyodbc>`__ library. It supports
-Microsoft SQL Server and Azure SQL Database.
+DB backend that uses pymssql
+`pymssql <http://www.pymssql.org/>`__ library. It supports
+Microsoft SQL Server
+
+*It is currently in alpha, so there are probably lots of bugs*
 
 Features
 --------
 
 -  Supports Django 2.1
--  Supports Microsoft SQL Server 2008/2008R2, 2012, 2014, 2016, 2017 and
-   Azure SQL Database
--  Passes most of the tests of the Django test suite
--  Compatible with
-   `Micosoft ODBC Driver for SQL Server <https://docs.microsoft.com/en-us/sql/connect/odbc/microsoft-odbc-driver-for-sql-server>`__,
-   `SQL Server Native Client <https://msdn.microsoft.com/en-us/library/ms131321(v=sql.120).aspx>`__,
-   and `FreeTDS <http://www.freetds.org/>`__ ODBC drivers
+-  Supports any server supported by pymssql
 
 Dependencies
 ------------
 
 -  Django 2.1
--  pyodbc 3.0 or newer
+-  pymssql 2.1 or newer
 
 Installation
 ------------
 
-1. Install pyodbc and Django
+1. Install pymssql and Django
 
-2. Install django-pyodbc-azure ::
-
-    pip install django-pyodbc-azure
+2. Install django-pymssql 
 
 3. Now you can point the ``ENGINE`` setting in the settings file used by
-   your Django application or project to the ``'sql_server.pyodbc'``
+   your Django application or project to the ``'django_pymssql'``
    module path ::
 
-    'ENGINE': 'sql_server.pyodbc'
+    'ENGINE': 'django_pymssql'
 
 Configuration
 -------------
@@ -58,7 +45,7 @@ in DATABASES control the behavior of the backend:
 
 -  ENGINE
 
-   String. It must be ``"sql_server.pyodbc"``.
+   String. It must be ``"django_pymssql"``.
 
 -  NAME
 
@@ -66,8 +53,7 @@ in DATABASES control the behavior of the backend:
 
 -  HOST
 
-   String. SQL Server instance in ``"server\instance"`` (on-premise) or
-   ``"server.database.windows.net"`` (Azure SQL Database) format.
+   String. SQL Server instance in ``"server"`` format.
 
 -  PORT
 
@@ -76,9 +62,7 @@ in DATABASES control the behavior of the backend:
 
 -  USER
 
-   String. Database user name in ``"user"`` (on-premise) or
-   ``"user@server"`` (Azure SQL Database) format.
-   If not given then MS Integrated Security will be used.
+   String. Database user name in ``"user"`` format.
 
 -  PASSWORD
 
@@ -120,91 +104,11 @@ OPTIONS
 
 Dictionary. Current available keys are:
 
--  driver
-
-   String. ODBC Driver to use (``"ODBC Driver 13 for SQL Server"``,
-   ``"SQL Server Native Client 11.0"``, ``"FreeTDS"`` etc).
-   Default is ``"ODBC Driver 13 for SQL Server"``.
-
--  isolation_level
-
-   String. Sets `transaction isolation level
-   <https://docs.microsoft.com/en-us/sql/t-sql/statements/set-transaction-isolation-level-transact-sql>`__
-   for each database session. Valid values for this entry are
-   ``READ UNCOMMITTED``, ``READ COMMITTED``, ``REPEATABLE READ``,
-   ``SNAPSHOT``, and ``SERIALIZABLE``. Default is ``None`` which means
-   no isolation levei is set to a database session and SQL Server default
-   will be used.
-
--  dsn
-
-   String. A named DSN can be used instead of ``HOST``.
-
--  host_is_server
-
-   Boolean. Only relevant if using the FreeTDS ODBC driver under
-   Unix/Linux.
-
-   By default, when using the FreeTDS ODBC driver the value specified in
-   the ``HOST`` setting is used in a ``SERVERNAME`` ODBC connection
-   string component instead of being used in a ``SERVER`` component;
-   this means that this value should be the name of a *dataserver*
-   definition present in the ``freetds.conf`` FreeTDS configuration file
-   instead of a hostname or an IP address.
-
-   But if this option is present and it's value is ``True``, this
-   special behavior is turned off.
-
-   See http://www.freetds.org/userguide/dsnless.htm for more information.
-
--  unicode_results
-
-   Boolean. If it is set to ``True``, pyodbc's *unicode_results* feature
-   is activated and strings returned from pyodbc are always Unicode.
-   Default value is ``False``.
-
--  extra_params
-
-   String. Additional parameters for the ODBC connection. The format is
-   ``"param=value;param=value"``.
-
--  collation
-
-   String. Name of the collation to use when performing text field
-   lookups against the database. Default is ``None``; this means no
-   collation specifier is added to your lookup SQL (the default
-   collation of your database will be used). For Chinese language you
-   can set it to ``"Chinese_PRC_CI_AS"``.
-
--  connection_timeout
-
-   Integer. Sets the timeout in seconds for the database connection process.
-   Default value is ``0`` which disables the timeout.
-
--  connection_retries
-
-   Integer. Sets the times to retry the database connection process.
-   Default value is ``5``.
-
--  connection_retry_backoff_time
-
-   Integer. Sets the back off time in seconds for reries of
-   the database connection process. Default value is ``5``.
-
 -  query_timeout
 
    Integer. Sets the timeout in seconds for the database query.
    Default value is ``0`` which disables the timeout.
 
-backend-specific settings
-~~~~~~~~~~~~~~~~~~~~~~~~~
-
-The following project-level settings also control the behavior of the backend:
-
--  DATABASE_CONNECTION_POOLING
-
-   Boolean. If it is set to ``False``, pyodbc's connection pooling feature
-   won't be activated.
 
 Example
 ~~~~~~~
@@ -215,35 +119,24 @@ Here is an example of the database settings:
 
     DATABASES = {
         'default': {
-            'ENGINE': 'sql_server.pyodbc',
+            'ENGINE': 'django_pymssql',
             'NAME': 'mydb',
-            'USER': 'user@myserver',             
+            'USER': 'user',             
             'PASSWORD': 'password',
-            'HOST': 'myserver.database.windows.net',
+            'HOST': 'myserver',
             'PORT': '',
-
-            'OPTIONS': {
-                'driver': 'ODBC Driver 13 for SQL Server',
-            },
         },
     }
     
-    # set this to False if you want to turn off pyodbc's connection pooling
-    DATABASE_CONNECTION_POOLING = False
 
 Limitations
 -----------
 
-The following features are currently not supported:
-
-- Altering a model field from or to AutoField at migration
+Currently in alpha so many limitations may apply. Also,
+much code has been ported from the home project, and many
+of the features are untested.
 
 Notice
 ------
 
-This version of *django-pyodbc-azure* only supports Django 2.1.
-If you want to use it on older versions of Django,
-specify an appropriate version number (2.0.x.x for Django 2.0)
-at installation like this: ::
-
-    pip install "django-pyodbc-azure<2.1"
+This version of *django-pymssql* only supports Django 2.1.

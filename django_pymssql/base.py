@@ -12,15 +12,15 @@ if VERSION[:3] < (2,1,0) or VERSION[:2] >= (2,2):
     raise ImproperlyConfigured("Django %d.%d.%d is not supported." % VERSION[:3])
 
 try:
-    import pyodbc as Database
+    import pymssql as Database
 except ImportError as e:
-    raise ImproperlyConfigured("Error loading pyodbc module: %s" % e)
+    raise ImproperlyConfigured("Error loading pymssql module: %s" % e)
 
 from django.utils.version import get_version_tuple
 
-pyodbc_ver = get_version_tuple(Database.version)
-if pyodbc_ver < (3,0):
-    raise ImproperlyConfigured("pyodbc 3.0 or newer is required; you have %s" % Database.version)
+pymssql_ver = get_version_tuple(Database.__version__)
+if pymssql_ver < (2,1):
+    raise ImproperlyConfigured("pymssql 2.1 or newer is required; you have %s" % Database.version)
 
 from django.conf import settings
 from django.db import NotSupportedError
@@ -40,22 +40,6 @@ from .features import DatabaseFeatures
 from .introspection import DatabaseIntrospection
 from .operations import DatabaseOperations
 from .schema import DatabaseSchemaEditor
-
-EDITION_AZURE_SQL_DB = 5
-
-
-def encode_connection_string(fields):
-    """Encode dictionary of keys and values as an ODBC connection String.
-
-    See [MS-ODBCSTR] document:
-    https://msdn.microsoft.com/en-us/library/ee208909%28v=sql.105%29.aspx
-    """
-    # As the keys are all provided by us, don't need to encode them as we know
-    # they are ok.
-    return ';'.join(
-        '%s=%s' % (k, encode_value(v))
-        for k, v in fields.items()
-    )
 
 def encode_value(v):
     """If the value contains a semicolon, or starts with a left curly brace,
@@ -80,12 +64,12 @@ class DatabaseWrapper(BaseDatabaseWrapper):
         'BooleanField':      'bit',
         'CharField':         'nvarchar(%(max_length)s)',
         'DateField':         'date',
-        'DateTimeField':     'datetime2',
+        'DateTimeField':     'datetime',
         'DecimalField':      'numeric(%(max_digits)s, %(decimal_places)s)',
         'DurationField':     'bigint',
         'FileField':         'nvarchar(%(max_length)s)',
         'FilePathField':     'nvarchar(%(max_length)s)',
-        'FloatField':        'double precision',
+        'FloatField':        'float',
         'IntegerField':      'int',
         'IPAddressField':    'nvarchar(15)',
         'GenericIPAddressField': 'nvarchar(39)',
@@ -97,7 +81,7 @@ class DatabaseWrapper(BaseDatabaseWrapper):
         'SmallIntegerField': 'smallint',
         'TextField':         'nvarchar(max)',
         'TimeField':         'time',
-        'UUIDField':         'char(32)',
+        'UUIDField':         'uniqueidentifier',
     }
     data_type_check_constraints = {
         'PositiveIntegerField': '[%(column)s] >= 0',
@@ -159,7 +143,6 @@ class DatabaseWrapper(BaseDatabaseWrapper):
         14: 2017,
     }
 
-    # https://azure.microsoft.com/en-us/documentation/articles/sql-database-develop-csharp-retry-windows/
     _transient_error_numbers = (
         '4060',
         '10928',
@@ -184,7 +167,7 @@ class DatabaseWrapper(BaseDatabaseWrapper):
         # None, it will be determined based on the driver, namely it'll be
         # False if the driver is a windows driver and True otherwise.
         #
-        # However, recent versions of FreeTDS and pyodbc (0.91 and 3.0.6 as
+        # However, recent versions of FreeTDS and pymssql (0.91 and 3.0.6 as
         # of writing) are perfectly okay being fed unicode, which is why
         # this option is configurable.
         if 'driver_needs_utf8' in opts:
@@ -229,72 +212,22 @@ class DatabaseWrapper(BaseDatabaseWrapper):
         return conn_params
 
     def get_new_connection(self, conn_params):
-        database = conn_params['NAME']
-        host = conn_params.get('HOST', 'localhost')
-        user = conn_params.get('USER', None)
-        password = conn_params.get('PASSWORD', None)
-        port = conn_params.get('PORT', None)
+        conn_dict = dict(
+            database = conn_params['NAME'],
+            host = conn_params.get('HOST', 'localhost'),
+            user = conn_params.get('USER', None),
+            password = conn_params.get('PASSWORD', None),
+            port = conn_params.get('PORT', None),
+        )
+
+        conn_dict = {
+            k:v.strip()
+            for k, v in conn_dict.items()
+            if v is not None and v.strip() != ''
+        }
 
         options = conn_params.get('OPTIONS', {})
-        driver = options.get('driver', 'ODBC Driver 13 for SQL Server')
-        dsn = options.get('dsn', None)
 
-        # Microsoft driver names assumed here are:
-        # * SQL Server Native Client 10.0/11.0
-        # * ODBC Driver 11/13 for SQL Server
-        ms_drivers = re.compile('^ODBC Driver .* for SQL Server$|^SQL Server Native Client')
-
-        # available ODBC connection string keywords:
-        # (Microsoft drivers for Windows)
-        # https://docs.microsoft.com/en-us/sql/relational-databases/native-client/applications/using-connection-string-keywords-with-sql-server-native-client
-        # (Microsoft drivers for Linux/Mac)
-        # https://docs.microsoft.com/en-us/sql/connect/odbc/linux-mac/connection-string-keywords-and-data-source-names-dsns
-        # (FreeTDS)
-        # http://www.freetds.org/userguide/odbcconnattr.htm
-        cstr_parts = {}
-        if dsn:
-            cstr_parts['DSN'] = dsn
-        else:
-            # Only append DRIVER if DATABASE_ODBC_DSN hasn't been set
-            cstr_parts['DRIVER'] = driver
-
-            if ms_drivers.match(driver):
-                if port:
-                    host = ','.join((host, str(port)))
-                cstr_parts['SERVER'] = host
-            elif options.get('host_is_server', False):
-                if port:
-                    cstr_parts['PORT'] = str(port)
-                cstr_parts['SERVER'] = host
-            else:
-                cstr_parts['SERVERNAME'] = host
-
-        if user:
-            cstr_parts['UID'] = user
-            cstr_parts['PWD'] = password
-        else:
-            if ms_drivers.match(driver):
-                cstr_parts['Trusted_Connection'] = 'yes'
-            else:
-                cstr_parts['Integrated Security'] = 'SSPI'
-
-        cstr_parts['DATABASE'] = database
-
-        if ms_drivers.match(driver) and os.name == 'nt':
-            cstr_parts['MARS_Connection'] = 'yes'
-
-        connstr = encode_connection_string(cstr_parts)
-
-        # extra_params are glued on the end of the string without encoding,
-        # so it's up to the settings writer to make sure they're appropriate -
-        # use encode_connection_string if constructing from external input.
-        if options.get('extra_params', None):
-            connstr += ';' + options['extra_params']
-
-        unicode_results = options.get('unicode_results', False)
-        timeout = options.get('connection_timeout', 0)
-        retries = options.get('connection_retries', 5)
-        backoff_time = options.get('connection_retry_backoff_time', 5)
         query_timeout = options.get('query_timeout', 0)
 
         conn = None
@@ -302,13 +235,12 @@ class DatabaseWrapper(BaseDatabaseWrapper):
         need_to_retry = False
         while conn is None:
             try:
-                conn = Database.connect(connstr,
-                                        unicode_results=unicode_results,
-                                        timeout=timeout)
+                conn = Database.connect(**conn_dict, as_dict=False)
             except Exception as e:
+                errNum, errText = e.args[0]
                 for error_number in self._transient_error_numbers:
-                    if error_number in e.args[1]:
-                        if error_number in e.args[1] and retry_count < retries:
+                    if error_number == errNum:
+                        if error_number ==errNum and retry_count < retries:
                             time.sleep(backoff_time)
                             need_to_retry = True
                             retry_count = retry_count + 1
@@ -318,31 +250,10 @@ class DatabaseWrapper(BaseDatabaseWrapper):
                 if not need_to_retry:
                     raise
 
-        conn.timeout = query_timeout
+        conn._conn.query_timeout = query_timeout
         return conn
 
     def init_connection_state(self):
-        drv_name = self.connection.getinfo(Database.SQL_DRIVER_NAME).upper()
-
-        if drv_name.startswith('LIBTDSODBC'):
-            try:
-                drv_ver = self.connection.getinfo(Database.SQL_DRIVER_VER)
-                ver = get_version_tuple(drv_ver)[:2]
-                if ver < (0, 95):
-                    raise ImproperlyConfigured(
-                        "FreeTDS 0.95 or newer is required.")
-            except:
-                # unknown driver version
-                pass
-
-        ms_drv_names = re.compile('^(LIB)?(SQLNCLI|MSODBCSQL)')
-
-        if ms_drv_names.match(drv_name):
-            self.driver_charset = None
-            # http://msdn.microsoft.com/en-us/library/ms131686.aspx
-            self.supports_mars = True
-            self.features.can_use_chunked_reads = True
-
         settings_dict = self.settings_dict
         cursor = self.create_cursor()
 
@@ -359,7 +270,8 @@ class DatabaseWrapper(BaseDatabaseWrapper):
         cursor.execute('SET DATEFORMAT ymd; SET DATEFIRST %s' % datefirst)
 
         # http://blogs.msdn.com/b/sqlnativeclient/archive/2008/02/27/microsoft-sql-server-native-client-and-microsoft-sql-server-2008-native-client.aspx
-        val = cursor.execute('SELECT SYSDATETIME()').fetchone()[0]
+        cursor.execute('SELECT GETDATE()')
+        val = cursor.fetchone()[0]
         if isinstance(val, str):
             raise ImproperlyConfigured(
                 "The database driver doesn't support modern datatime types.")
@@ -396,22 +308,6 @@ class DatabaseWrapper(BaseDatabaseWrapper):
                 _known_versions[self.alias] = self._sql_server_versions[ver]
         return _known_versions[self.alias]
 
-    @cached_property
-    def to_azure_sql_db(self, _known_azures={}):
-        """
-        Whether this connection is to a Microsoft Azure database server
-
-        The _known_azures default dictionary is created on the class. This is
-        intentional - it allows us to cache this property's value across instances.
-        Therefore, when Django creates a new database connection using the same
-        alias, we won't need query the server again.
-        """
-        if self.alias not in _known_azures:
-            with self.temporary_connection() as cursor:
-                cursor.execute("SELECT CAST(SERVERPROPERTY('EngineEdition') AS integer)")
-                _known_azures[self.alias] = cursor.fetchone()[0] == EDITION_AZURE_SQL_DB
-        return _known_azures[self.alias]
-
     def _execute_foreach(self, sql, table_names=None):
         cursor = self.cursor()
         if table_names is None:
@@ -421,7 +317,8 @@ class DatabaseWrapper(BaseDatabaseWrapper):
 
     def _get_trancount(self):
         with self.connection.cursor() as cursor:
-            return cursor.execute('SELECT @@TRANCOUNT').fetchone()[0]
+            cursor.execute('SELECT @@TRANCOUNT')
+            return cursor.fetchone()[0]
 
     def _on_error(self, e):
         if e.args[0] in self._codes_for_networkerror:
@@ -461,30 +358,28 @@ class DatabaseWrapper(BaseDatabaseWrapper):
                 # FreeTDS requires TRANCOUNT that is greater than 0
                 allowed = self._get_trancount() > 0
             if allowed:
-                self.connection.autocommit = autocommit
+                self.connection.autocommit(autocommit)
 
     def check_constraints(self, table_names=None):
         self._execute_foreach('ALTER TABLE %s WITH CHECK CHECK CONSTRAINT ALL',
                               table_names)
 
     def disable_constraint_checking(self):
-        # Azure SQL Database doesn't support sp_msforeachtable
-        #cursor.execute('EXEC sp_msforeachtable "ALTER TABLE ? NOCHECK CONSTRAINT ALL"')
         if not self.needs_rollback:
-            self._execute_foreach('ALTER TABLE %s NOCHECK CONSTRAINT ALL')
+            cursor.execute('EXEC sp_msforeachtable "ALTER TABLE ? NOCHECK CONSTRAINT ALL"')
+            #self._execute_foreach('ALTER TABLE %s NOCHECK CONSTRAINT ALL')
         return not self.needs_rollback
 
     def enable_constraint_checking(self):
-        # Azure SQL Database doesn't support sp_msforeachtable
-        #cursor.execute('EXEC sp_msforeachtable "ALTER TABLE ? WITH CHECK CHECK CONSTRAINT ALL"')
         if not self.needs_rollback:
-            self.check_constraints()
+            cursor.execute('EXEC sp_msforeachtable "ALTER TABLE ? WITH CHECK CHECK CONSTRAINT ALL"')
+            #self.check_constraints()
 
 
 class CursorWrapper(object):
     """
-    A wrapper around the pyodbc's cursor that takes in account a) some pyodbc
-    DB-API 2.0 implementation and b) some common ODBC driver particularities.
+    A wrapper around the pymssql's cursor that takes in account some pymssql
+    DB-API 2.0 implementation
     """
     def __init__(self, cursor, connection):
         self.active = True
@@ -500,15 +395,6 @@ class CursorWrapper(object):
             self.cursor.close()
 
     def format_sql(self, sql, params):
-        if self.driver_charset and isinstance(sql, str):
-            # FreeTDS (and other ODBC drivers?) doesn't support Unicode
-            # yet, so we need to encode the SQL clause itself in utf-8
-            sql = smart_str(sql, self.driver_charset)
-
-        # pyodbc uses '?' instead of '%s' as parameter placeholder.
-        if params is not None:
-            sql = sql % tuple('?' * len(params))
-
         return sql
 
     def format_params(self, params):
@@ -566,7 +452,7 @@ class CursorWrapper(object):
     def format_row(self, row):
         """
         Decode data coming from the database if needed and convert rows to tuples
-        (pyodbc Rows are not hashable).
+        (pymssql Rows are not hashable).
         """
         if self.driver_charset:
             for i in range(len(row)):

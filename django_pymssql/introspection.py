@@ -1,65 +1,73 @@
-import pyodbc as Database
+# vim:set ai et shiftwidth=4 softtabstop=4 :
+import pymssql as Database
+
+from itertools import chain
 
 from django.db.backends.base.introspection import (
     BaseDatabaseIntrospection, FieldInfo, TableInfo,
 )
 from django.db.models.indexes import Index
 
-SQL_AUTOFIELD = -777555
-SQL_BIGAUTOFIELD = -777444
+def sql_quote(x):
+    return Database._mssql.quote_simple_value(
+        x.encode('utf-8')
+    ).decode('utf-8')
 
+def executeWithSchema(cursor, sql, table_name):
+    schema, tblname = tuple(chain([None],table_name.split(".")))[-2:]
+    cursor.execute(
+        sql.format(
+            'SCHEMA_NAME()'
+            if schema is None else
+            sql_quote(schema)
+        ),
+        (tblname,)
+    )
 
 class DatabaseIntrospection(BaseDatabaseIntrospection):
     # Map type codes to Django Field types.
     data_types_reverse = {
-        SQL_AUTOFIELD:                  'AutoField',
-        SQL_BIGAUTOFIELD:               'BigAutoField',
-        Database.SQL_BIGINT:            'BigIntegerField',
-        #Database.SQL_BINARY:            ,
-        Database.SQL_BIT:               'BooleanField',
-        Database.SQL_CHAR:              'CharField',
-        Database.SQL_DECIMAL:           'DecimalField',
-        Database.SQL_DOUBLE:            'FloatField',
-        Database.SQL_FLOAT:             'FloatField',
-        Database.SQL_GUID:              'TextField',
-        Database.SQL_INTEGER:           'IntegerField',
-        Database.SQL_LONGVARBINARY:     'BinaryField',
-        #Database.SQL_LONGVARCHAR:       ,
-        Database.SQL_NUMERIC:           'DecimalField',
-        Database.SQL_REAL:              'FloatField',
-        Database.SQL_SMALLINT:          'SmallIntegerField',
-        Database.SQL_SS_TIME2:          'TimeField',
-        Database.SQL_TINYINT:           'SmallIntegerField',
-        Database.SQL_TYPE_DATE:         'DateField',
-        Database.SQL_TYPE_TIME:         'TimeField',
-        Database.SQL_TYPE_TIMESTAMP:    'DateTimeField',
-        Database.SQL_VARBINARY:         'BinaryField',
-        Database.SQL_VARCHAR:           'TextField',
-        Database.SQL_WCHAR:             'CharField',
-        Database.SQL_WLONGVARCHAR:      'TextField',
-        Database.SQL_WVARCHAR:          'TextField',
+        'autobigint': 'BigAutoField',
+        'autoint': 'AutoField',
+        'bigint': 'BigIntegerField',
+        'binary': 'BinaryField',
+        'bit': 'BooleanField',
+        'char': 'CharField',
+        'date': 'DateField',
+        'datetime': 'DateTimeField',
+        'datetime2': 'DateTimeField',
+        'datetimeoffset': 'DateTimeField',
+        'decimal': 'DecimalField',
+        'float': 'FloatField',
+        #'geography': 'XXXX',
+        #'geometry': 'XXXX',
+        'image': 'BinaryField',
+        'int': 'IntegerField',
+        'money': 'DecimalField',
+        'nchar': 'CharField',
+        'ntext': 'TextField',
+        'numeric': 'DecimalField',
+        'nvarchar': 'CharField',
+        'smalldatetime': 'DateTimeField',
+        'smallint': 'SmallIntegerField',
+        'smallmoney': 'DecimalField',
+        'text': 'TextField',
+        'time': 'TimeField',
+        'tinyint': 'SmallIntegerField',
+        'uniqueidentifier': 'UUIDField',
+        'varbinary': 'BinaryField',
+        'varchar': 'CharField',
+        #'xml': 'XXXX',
     }
 
     ignored_tables = []
-
-    def get_field_type(self, data_type, description):
-        field_type = super().get_field_type(data_type, description)
-        # the max nvarchar length is described as 0 or 2**30-1
-        # (it depends on the driver)
-        size = description.internal_size
-        if field_type == 'CharField':
-            if size == 0 or size >= 2**30-1:
-                field_type = "TextField"
-        elif field_type == 'TextField':
-            if size > 0 and size < 2**30-1:
-                field_type = 'CharField'
-        return field_type
 
     def get_table_list(self, cursor):
         """
         Returns a list of table and view names in the current database.
         """
         sql = 'SELECT TABLE_NAME, TABLE_TYPE FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = SCHEMA_NAME()'
+
         cursor.execute(sql)
         types = {'BASE TABLE': 't', 'VIEW': 'v'}
         return [TableInfo(row[0], types.get(row[1]))
@@ -76,8 +84,9 @@ class DatabaseIntrospection(BaseDatabaseIntrospection):
         #cursor.execute("SELECT COLUMNPROPERTY(OBJECT_ID(%s), %s, 'IsIdentity')",
         #                 (connection.ops.quote_name(table_name), column_name))
         cursor.execute("SELECT COLUMNPROPERTY(OBJECT_ID(%s), %s, 'IsIdentity')",
-                         (self.connection.ops.quote_name(table_name), column_name))
-        return cursor.fetchall()[0][0]
+             (table_name, column_name)
+        )
+        return bool(cursor.fetchall()[0][0])
 
     def get_table_description(self, cursor, table_name, identity_check=True):
         """Returns a description of the table, with DB-API cursor.description interface.
@@ -92,18 +101,50 @@ class DatabaseIntrospection(BaseDatabaseIntrospection):
         When a bigint field is found with an IDENTITY property, it is given a custom field number
         of SQL_BIGAUTOFIELD, which maps to the 'BigAutoField' value in the DATA_TYPES_REVERSE dict.
         """
+        sql = '''SELECT
+            TABLE_CATALOG,
+            TABLE_SCHEMA,
+            TABLE_NAME,
+            COLUMN_NAME,
+            ORDINAL_POSITION,
+            COLUMN_DEFAULT,
+            IS_NULLABLE,
+            DATA_TYPE,
+            CHARACTER_MAXIMUM_LENGTH,
+            CHARACTER_OCTET_LENGTH,
+            NUMERIC_PRECISION,
+            NUMERIC_PRECISION_RADIX,
+            NUMERIC_SCALE,
+            DATETIME_PRECISION,
+            CHARACTER_SET_CATALOG,
+            CHARACTER_SET_SCHEMA,
+            CHARACTER_SET_NAME,
+            COLLATION_CATALOG,
+            COLLATION_SCHEMA,
+            COLLATION_NAME,
+            DOMAIN_CATALOG,
+            DOMAIN_SCHEMA,
+            DOMAIN_NAME
+        FROM
+            INFORMATION_SCHEMA.COLUMNS
+        WHERE
+            TABLE_CATALOG = DB_NAME()
+        AND
+            TABLE_SCHEMA = {0}
+        AND
+            TABLE_NAME = %s
+        ORDER BY
+            ORDINAL_POSITION
+        '''
+        
+        executeWithSchema(cursor, sql, table_name)
+        #'name type_code display_size internal_size precision scale null_ok default'
 
-        # map pyodbc's cursor.columns to db-api cursor description
-        columns = [[c[3], c[4], None, c[6], c[6], c[8], c[10], c[12]] for c in cursor.columns(table=table_name)]
+        columns = [[c[3], c[7], None, c[8], c[10], c[12], c[6]=='YES', c[5]] for c in cursor]
         items = []
         for column in columns:
             if identity_check and self._is_auto_field(cursor, table_name, column[0]):
-                if column[1] == Database.SQL_BIGINT:
-                    column[1] = SQL_BIGAUTOFIELD
-                else:
-                    column[1] = SQL_AUTOFIELD
-            if column[1] == Database.SQL_WVARCHAR and column[3] < 4000:
-                column[1] = Database.SQL_WCHAR
+                column[1] = 'auto' + column[1]
             items.append(FieldInfo(*column))
         return items
 
@@ -127,7 +168,6 @@ class DatabaseIntrospection(BaseDatabaseIntrospection):
         # CONSTRAINT_TABLE_USAGE:  http://msdn2.microsoft.com/en-us/library/ms179883.aspx
         # REFERENTIAL_CONSTRAINTS: http://msdn2.microsoft.com/en-us/library/ms179987.aspx
         # TABLE_CONSTRAINTS:       http://msdn2.microsoft.com/en-us/library/ms181757.aspx
-
         sql = """
 SELECT e.COLUMN_NAME AS column_name,
   c.TABLE_NAME AS referenced_table_name,
@@ -141,9 +181,9 @@ INNER JOIN INFORMATION_SCHEMA.CONSTRAINT_COLUMN_USAGE AS d
   ON c.CONSTRAINT_NAME = d.CONSTRAINT_NAME AND c.CONSTRAINT_SCHEMA = d.CONSTRAINT_SCHEMA
 INNER JOIN INFORMATION_SCHEMA.CONSTRAINT_COLUMN_USAGE AS e
   ON a.CONSTRAINT_NAME = e.CONSTRAINT_NAME AND a.TABLE_SCHEMA = e.TABLE_SCHEMA
-WHERE a.TABLE_SCHEMA = SCHEMA_NAME() AND a.TABLE_NAME = %s AND a.CONSTRAINT_TYPE = 'FOREIGN KEY'"""
-        cursor.execute(sql, (table_name,))
-        return dict([[item[0], (item[2], item[1])] for item in cursor.fetchall()])
+WHERE a.TABLE_SCHEMA = {0} AND a.TABLE_NAME = %s AND a.CONSTRAINT_TYPE = 'FOREIGN KEY'"""
+        executeWithSchema(cursor, sql, table_name)
+        return dict([[item[0], (item[2], item[1])] for item in cursor])
 
     def get_key_columns(self, cursor, table_name):
         """
@@ -181,7 +221,7 @@ WHERE a.TABLE_SCHEMA = SCHEMA_NAME() AND a.TABLE_NAME = %s AND a.CONSTRAINT_TYPE
         constraints = {}
         # Loop over the key table, collecting things as constraints
         # This will get PKs, FKs, and uniques, but not CHECK
-        cursor.execute("""
+        sql = """
             SELECT
                 kc.constraint_name,
                 kc.column_name,
@@ -221,12 +261,15 @@ WHERE a.TABLE_SCHEMA = SCHEMA_NAME() AND a.TABLE_NAME = %s AND a.CONSTRAINT_TYPE
                 kc.table_name = fk.table_name AND
                 kc.column_name = fk.column_name
             WHERE
-                kc.table_schema = SCHEMA_NAME() AND
+                kc.table_schema = {0} AND
                 kc.table_name = %s
             ORDER BY
                 kc.constraint_name ASC,
                 kc.ordinal_position ASC
-        """, [table_name])
+        """
+
+        executeWithSchema(cursor, sql, table_name)
+
         for constraint, column, kind, ref_table, ref_column in cursor.fetchall():
             # If we're the first column, make the record
             if constraint not in constraints:
@@ -241,7 +284,7 @@ WHERE a.TABLE_SCHEMA = SCHEMA_NAME() AND a.TABLE_NAME = %s AND a.CONSTRAINT_TYPE
             # Record the details
             constraints[constraint]['columns'].append(column)
         # Now get CHECK constraint columns
-        cursor.execute("""
+        sql = """
             SELECT kc.constraint_name, kc.column_name
             FROM INFORMATION_SCHEMA.CONSTRAINT_COLUMN_USAGE AS kc
             JOIN INFORMATION_SCHEMA.TABLE_CONSTRAINTS AS c ON
@@ -250,9 +293,10 @@ WHERE a.TABLE_SCHEMA = SCHEMA_NAME() AND a.TABLE_NAME = %s AND a.CONSTRAINT_TYPE
                 kc.constraint_name = c.constraint_name
             WHERE
                 c.constraint_type = 'CHECK' AND
-                kc.table_schema = SCHEMA_NAME() AND
+                kc.table_schema = {0} AND
                 kc.table_name = %s
-        """, [table_name])
+        """
+        executeWithSchema(cursor, sql, table_name)
         for constraint, column in cursor.fetchall():
             # If we're the first column, make the record
             if constraint not in constraints:
@@ -267,7 +311,7 @@ WHERE a.TABLE_SCHEMA = SCHEMA_NAME() AND a.TABLE_NAME = %s AND a.CONSTRAINT_TYPE
             # Record the details
             constraints[constraint]['columns'].append(column)
         # Now get indexes
-        cursor.execute("""
+        sql = """
             SELECT
                 i.name AS index_name,
                 i.is_unique,
@@ -289,12 +333,13 @@ WHERE a.TABLE_SCHEMA = SCHEMA_NAME() AND a.TABLE_NAME = %s AND a.CONSTRAINT_TYPE
                 ic.object_id = c.object_id AND
                 ic.column_id = c.column_id
             WHERE
-                t.schema_id = SCHEMA_ID() AND
+                t.schema_id = SCHEMA_ID({}) AND
                 t.name = %s
             ORDER BY
                 i.index_id ASC,
                 ic.index_column_id ASC
-        """, [table_name])
+        """
+        executeWithSchema(cursor, sql, table_name)
         indexes = {}
         for index, unique, primary, type_, desc, order, column in cursor.fetchall():
             if index not in indexes:

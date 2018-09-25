@@ -9,9 +9,8 @@ from django.utils.encoding import force_text
 
 import pytz
 
-
 class DatabaseOperations(BaseDatabaseOperations):
-    compiler_module = 'sql_server.pyodbc.compiler'
+    compiler_module = 'django_pymssql.compiler'
 
     cast_char_field_without_max_length = 'nvarchar(max)'
 
@@ -245,7 +244,13 @@ class DatabaseOperations(BaseDatabaseOperations):
         """
         if name.startswith('[') and name.endswith(']'):
             return name # Quoting once is enough.
-        return '[%s]' % name
+
+        if "." in name:
+            return ".".join((
+                '[{}]'.format(i)
+                for i in name.split(".")
+            ))
+        return '[{}]'.format(name)
 
     def random_function_sql(self):
         """
@@ -338,7 +343,7 @@ class DatabaseOperations(BaseDatabaseOperations):
             sql_list.extend(['%s %s %s;' % (style.SQL_KEYWORD('DELETE'), style.SQL_KEYWORD('FROM'),
                              style.SQL_FIELD(self.quote_name(table)) ) for table in tables])
 
-            if self.connection.to_azure_sql_db and self.connection.sql_server_version < 2014:
+            if self.connection.to_mssql_db and self.connection.sql_server_version < 2014:
                 warnings.warn("Resetting identity columns is not supported " \
                               "on this versios of Azure SQL Database.",
                               RuntimeWarning)
@@ -404,7 +409,7 @@ class DatabaseOperations(BaseDatabaseOperations):
         if value is None:
             return None
         if settings.USE_TZ and timezone.is_aware(value):
-            # pyodbc donesn't support datetimeoffset
+            # pymssql donesn't support datetimeoffset
             value = value.astimezone(self.connection.timezone).replace(tzinfo=None)
         return value
 

@@ -12,8 +12,8 @@ class DatabaseCreation(BaseDatabaseCreation):
         # to do so, because it's not allowed to delete a database while being
         # connected to it.
         with self.connection._nodb_connection.cursor() as cursor:
-            to_azure_sql_db = self.connection.to_azure_sql_db
-            if not to_azure_sql_db:
+            to_mssql_db = self.connection.to_mssql_db
+            if not to_mssql_db:
                 cursor.execute("ALTER DATABASE %s SET SINGLE_USER WITH ROLLBACK IMMEDIATE"
                                 % self.connection.ops.quote_name(test_database_name))
             cursor.execute("DROP DATABASE %s"

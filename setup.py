@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 try:
     from setuptools import setup
 except ImportError:
@@ -6,7 +7,6 @@ except ImportError:
 CLASSIFIERS=[
     'Development Status :: 4 - Beta',
     'License :: OSI Approved :: BSD License',
-    'Framework :: Django',
     'Programming Language :: Python',
     'Programming Language :: Python :: 3',
     'Programming Language :: Python :: 3.5',
@@ -16,19 +16,15 @@ CLASSIFIERS=[
 ]
 
 setup(
-    name='django-pyodbc-azure',
+    name='django-pymssql',
     version='2.1.0.0',
-    description='Django backend for Microsoft SQL Server and Azure SQL Database using pyodbc',
-    long_description=open('README.rst').read(),
-    author='Michiya Takahashi',
-    author_email='michiya.takahashi@gmail.com',
-    url='https://github.com/michiya/django-pyodbc-azure',
+    description='Django backend for Microsoft SQL Server using pymssql',
     license='BSD',
-    packages=['sql_server', 'sql_server.pyodbc'],
+    packages=['django_pymssql'],
     install_requires=[
         'Django>=2.1.0,<2.2',
-        'pyodbc>=3.0',
+        'pymssql>=2.1',
     ],
     classifiers=CLASSIFIERS,
-    keywords='azure django',
+    keywords='pymssql django',
 )
